@@ -35,11 +35,11 @@ func (writer *LineWriter) Write(p []byte) (n int, err error) {
 	chunkSize := writer.chunkSize
 
 	for written := 0; written < total; {
-		write := min(total-written, chunkSize-writer.buf.Len())
+		toWrite := min(total-written, chunkSize-writer.buf.Len())
 
-		writer.buf.Write(p[written : written+write])
+		writer.buf.Write(p[written : written+toWrite])
 
-		written += write
+		written += toWrite
 
 		if writer.buf.Len() >= chunkSize && written < total {
 			writer.err = writer.flush(false)

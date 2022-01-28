@@ -2,44 +2,40 @@ package secretstream
 
 import (
 	"bytes"
-	"encoding/binary"
 	"io"
+	"jjavery/dashi/internal/chunked"
 	"jjavery/dashi/internal/sodium"
 )
 
 type SecretStreamWriter struct {
-	encoder   *sodium.SecretStreamEncoder
-	buf       bytes.Buffer
-	chunkSize int
-	out       io.Writer
-	err       error
+	encoder       *sodium.SecretStreamEncoder
+	chunkedWriter io.WriteCloser
+	buf           bytes.Buffer
+	chunkSize     int
+	out           io.Writer
+	err           error
 }
 
-func NewWriter(key []byte, chunkSize int, out io.Writer) (*SecretStreamWriter, error) {
+func NewSecretStreamWriter(key []byte, chunkSize int, out io.Writer) (*SecretStreamWriter, error) {
 	encoder, err := sodium.NewSecretStreamEncoder(key)
 	if err != nil {
 		return nil, err
 	}
 
+	chunkedWriter := chunked.NewChunkedWriter(out)
+
 	header := encoder.Header()
 
-	headerLength := make([]byte, 4)
-	binary.BigEndian.PutUint32(headerLength, uint32(len(header)))
-
-	_, err = out.Write(headerLength)
-	if err != nil {
-		return nil, err
-	}
-
-	_, err = out.Write(header)
+	_, err = chunkedWriter.Write(header)
 	if err != nil {
 		return nil, err
 	}
 
 	writer := SecretStreamWriter{
-		encoder:   encoder,
-		chunkSize: chunkSize,
-		out:       out,
+		encoder:       encoder,
+		chunkedWriter: chunkedWriter,
+		chunkSize:     chunkSize,
+		out:           out,
 	}
 
 	return &writer, nil
@@ -57,11 +53,11 @@ func (writer *SecretStreamWriter) Write(p []byte) (n int, err error) {
 	chunkSize := writer.chunkSize
 
 	for written := 0; written < total; {
-		write := min(total-written, chunkSize-writer.buf.Len())
+		toWrite := min(total-written, chunkSize-writer.buf.Len())
 
-		writer.buf.Write(p[written : written+write])
+		writer.buf.Write(p[written : written+toWrite])
 
-		written += write
+		written += toWrite
 
 		if writer.buf.Len() >= chunkSize && written < total {
 			writer.err = writer.flush(false)
@@ -93,15 +89,14 @@ func (writer *SecretStreamWriter) flush(final bool) error {
 
 	writer.buf.Reset()
 
-	chunkLength := make([]byte, 4)
-	binary.BigEndian.PutUint32(chunkLength, uint32(len(chunk)))
-
-	_, writer.err = writer.out.Write(chunkLength)
+	_, writer.err = writer.chunkedWriter.Write(chunk)
 	if writer.err != nil {
 		return writer.err
 	}
 
-	_, writer.err = writer.out.Write(chunk)
+	if final {
+		writer.err = writer.chunkedWriter.Close()
+	}
 
 	return writer.err
 }

@@ -24,10 +24,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// err = decrypt()
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+	err = decrypt()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func encrypt() (err error) {
