@@ -17,14 +17,12 @@ type SecretStreamWriter struct {
 }
 
 func NewSecretStreamWriter(key []byte, chunkSize int, out io.Writer) (*SecretStreamWriter, error) {
-	encoder, err := sodium.NewSecretStreamEncoder(key)
+	encoder, header, err := sodium.NewSecretStreamEncoder(key)
 	if err != nil {
 		return nil, err
 	}
 
 	chunkedWriter := chunked.NewChunkedWriter(out)
-
-	header := encoder.Header()
 
 	_, err = chunkedWriter.Write(header)
 	if err != nil {
@@ -99,6 +97,64 @@ func (writer *SecretStreamWriter) flush(final bool) error {
 	}
 
 	return writer.err
+}
+
+type SecretStreamReader struct {
+	decoder       *sodium.SecretStreamDecoder
+	chunkedReader io.Reader
+	in            io.Reader
+	buf           bytes.Buffer
+	err           error
+}
+
+func NewSecretStreamReader(key []byte, in io.Reader) (*SecretStreamReader, error) {
+	chunkedReader := chunked.NewChunkedReader(in)
+
+	header := make([]byte, 24)
+	_, err := chunkedReader.Read(header)
+	if err != nil {
+		return nil, err
+	}
+
+	decoder, err := sodium.NewSecretStreamDecoder(key, header)
+	if err != nil {
+		return nil, err
+	}
+
+	reader := SecretStreamReader{
+		decoder:       decoder,
+		chunkedReader: chunkedReader,
+		in:            in,
+	}
+
+	return &reader, nil
+}
+
+func (reader *SecretStreamReader) Read(p []byte) (int, error) {
+	if reader.buf.Len() > 0 {
+		return reader.buf.Read(p)
+	}
+
+	chunk := make([]byte, 273)
+
+	l, chunkErr := reader.chunkedReader.Read(chunk)
+	if chunkErr != nil && chunkErr != io.EOF {
+		return 0, chunkErr
+	}
+
+	cleartext, err := reader.decoder.Decode(chunk[0:l])
+	if err != nil {
+		return 0, err
+	}
+
+	_, err = reader.buf.Write(cleartext)
+	if err != nil {
+		return 0, err
+	}
+
+	n, err := reader.buf.Read(p)
+
+	return n, chunkErr
 }
 
 func min(a, b int) int {

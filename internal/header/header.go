@@ -19,6 +19,7 @@ var b64d = base64.RawStdEncoding.DecodeString
 type Header struct {
 	ProtocolVersion string
 	PublicKey       []byte
+	EphemeralKey    []byte
 	Nonce           []byte
 	Recipients      []Recipient
 	HMAC            []byte
@@ -28,6 +29,7 @@ type KeyType string
 
 const (
 	Ed25519 KeyType = "Ed25519"
+	X25519  KeyType = "X25519"
 )
 
 type Recipient struct {
@@ -36,10 +38,13 @@ type Recipient struct {
 	Message []byte
 }
 
-func NewHeader(publicKey []byte, nonce []byte, recipients []Recipient) (*Header, error) {
+func NewHeader(publicKey []byte, ephemeralKey []byte,
+	nonce []byte, recipients []Recipient) (*Header, error) {
+
 	header := Header{
 		ProtocolVersion: protocolVersion,
 		PublicKey:       publicKey,
+		EphemeralKey:    ephemeralKey,
 		Nonce:           nonce,
 		Recipients:      recipients,
 	}
@@ -66,6 +71,21 @@ func (header *Header) Marshal(out io.Writer) error {
 	}
 
 	_, err = buf.WriteString(b64(header.PublicKey))
+	if err != nil {
+		return err
+	}
+
+	_, err = buf.WriteString("\r\n")
+	if err != nil {
+		return err
+	}
+
+	_, err = buf.WriteString("Ephemeral-Key: X25519 ")
+	if err != nil {
+		return err
+	}
+
+	_, err = buf.WriteString(b64(header.EphemeralKey))
 	if err != nil {
 		return err
 	}
@@ -210,6 +230,28 @@ func Parse(in io.Reader) (*Header, io.Reader, error) {
 		return nil, nil, fmt.Errorf("Public-Key: %v", err)
 	}
 
+	// Public Key
+	ephemeralKeyHeader := mimeHeader.Get("Ephemeral-Key")
+	if ephemeralKeyHeader == "" {
+		return nil, nil, fmt.Errorf("Ephemeral-Key: header is required")
+	}
+
+	ephemeralKeyHeaderFields := strings.Fields(ephemeralKeyHeader)
+	if len(ephemeralKeyHeaderFields) != 2 {
+		return nil, nil, fmt.Errorf("Ephemeral-Key: invalid format")
+	}
+	if ephemeralKeyHeaderFields[0] != string(X25519) {
+		return nil, nil, fmt.Errorf("Ephemeral-Key: unknown key type")
+	}
+	if len(ephemeralKeyHeaderFields[1]) != 43 {
+		return nil, nil, fmt.Errorf("Ephemeral-Key: invalid length")
+	}
+
+	ephemeralKey, err := b64d(ephemeralKeyHeaderFields[1])
+	if err != nil {
+		return nil, nil, fmt.Errorf("Ephemeral-Key: %v", err)
+	}
+
 	// Nonce
 	nonceHeader := mimeHeader.Get("Nonce")
 	if nonceHeader == "" {
@@ -282,6 +324,7 @@ func Parse(in io.Reader) (*Header, io.Reader, error) {
 	header := Header{
 		ProtocolVersion: protocolVersionLine,
 		PublicKey:       publicKey,
+		EphemeralKey:    ephemeralKey,
 		Nonce:           nonce,
 		Recipients:      recipients,
 	}

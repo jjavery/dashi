@@ -2,24 +2,30 @@ package header_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"jjavery/dashi/internal/header"
 	"strings"
 	"testing"
 )
 
-var publicKey = make([]byte, 32)
-var nonce = make([]byte, 24)
-var recipientID = make([]byte, 32)
-var recipientMessage = make([]byte, 48)
+var b64d = base64.RawStdEncoding.DecodeString
 
-var headerString = "DASHI/0.0.1\r\n" +
-	"Public-Key: Ed25519 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\r\n" +
-	"Nonce: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\r\n" +
-	"Recipient: Ed25519 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\r\n" +
-	"  AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\r\n" +
-	"Recipient: Ed25519\r\n" +
-	"  AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\r\n" +
-	"\r\n"
+var publicKey, _ = b64d("N0wckSAp9AaWXp8LoLDatNZwImCruEXR+8c3bU0/Yd8")
+var ephemeralKey, _ = b64d("s7ZwQdPm5UXTW3ZF8lbSq0S6IxYTAghdh7oYrL1oIxU")
+var nonce, _ = b64d("wodOop+GzLQcONxsXpvcASDAXJZ6qoF6")
+var recipientID, _ = b64d("58Jrd91MvzPqJEVty1ZBfqBwFyfdS31Eee48irrKSjw")
+var recipientMessage, _ = b64d("JMFadsWkBfDkR6YRS+XhLcTdcmeGomXpN1nep29nG/co9/a2uf3phMCL190eag9C")
+
+var headerString = strings.ReplaceAll(`DASHI/0.0.1
+Public-Key: Ed25519 N0wckSAp9AaWXp8LoLDatNZwImCruEXR+8c3bU0/Yd8
+Ephemeral-Key: X25519 s7ZwQdPm5UXTW3ZF8lbSq0S6IxYTAghdh7oYrL1oIxU
+Nonce: wodOop+GzLQcONxsXpvcASDAXJZ6qoF6
+Recipient: Ed25519 58Jrd91MvzPqJEVty1ZBfqBwFyfdS31Eee48irrKSjw
+  JMFadsWkBfDkR6YRS+XhLcTdcmeGomXpN1nep29nG/co9/a2uf3phMCL190eag9C
+Recipient: Ed25519
+  JMFadsWkBfDkR6YRS+XhLcTdcmeGomXpN1nep29nG/co9/a2uf3phMCL190eag9C
+
+`, "\n", "\r\n")
 
 func TestHeaderMarshal(t *testing.T) {
 	recipient1, err := header.NewRecipient(header.Ed25519, recipientID, recipientMessage)
@@ -34,7 +40,7 @@ func TestHeaderMarshal(t *testing.T) {
 
 	recipients := []header.Recipient{*recipient1, *recipient2}
 
-	header, err := header.NewHeader(publicKey, nonce, recipients)
+	header, err := header.NewHeader(publicKey, ephemeralKey, nonce, recipients)
 	if err != nil {
 		t.Error(err)
 	}
@@ -80,7 +86,7 @@ func TestHeaderParse(t *testing.T) {
 		if r.KeyType != header.Ed25519 {
 			t.Errorf("expected:\n%q\nactual:\n%q\n", header.Ed25519, r.KeyType)
 		}
-		if r.ID != nil {
+		if r.ID != nil && len(r.ID) != 0 {
 			if bytes.Compare(r.ID, recipientID) != 0 {
 				t.Errorf("expected:\n%q\nactual:\n%q\n", recipientID, r.ID)
 			}

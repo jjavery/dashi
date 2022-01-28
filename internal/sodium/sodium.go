@@ -17,17 +17,18 @@ func init() {
 }
 
 var signPublicKeyBytes = int(C.crypto_sign_publickeybytes())
+var signSecretKeyBytes = int(C.crypto_sign_secretkeybytes())
 
-func ConvertEd25519SecretKeyToPublicKey(ed25519SecretKey []byte) ([]byte, error) {
+func CreateSignKeypair() ([]byte, []byte, error) {
 	publicKey := make([]byte, signPublicKeyBytes)
+	secretKey := make([]byte, signSecretKeyBytes)
 
-	result := C.crypto_sign_ed25519_sk_to_pk(
-		(*C.uchar)(&publicKey[0]), (*C.uchar)(&ed25519SecretKey[0]))
+	result := C.crypto_sign_keypair((*C.uchar)(&publicKey[0]), (*C.uchar)(&secretKey[0]))
 	if result != 0 {
-		return nil, fmt.Errorf("crypto_sign_ed25519_sk_to_pk: error %d", result)
+		return nil, nil, fmt.Errorf("crypto_sign_keypair: error %d", result)
 	}
 
-	return publicKey, nil
+	return secretKey, publicKey, nil
 }
 
 var secretstreamKeyBytes = int(C.crypto_secretstream_xchacha20poly1305_keybytes())
@@ -48,6 +49,18 @@ func CreateSecretboxNonce() []byte {
 	C.randombytes_buf(unsafe.Pointer(&nonce[0]), C.ulong(secretboxNonceBytes))
 
 	return nonce
+}
+
+func ConvertEd25519SecretKeyToPublicKey(ed25519SecretKey []byte) ([]byte, error) {
+	publicKey := make([]byte, signPublicKeyBytes)
+
+	result := C.crypto_sign_ed25519_sk_to_pk(
+		(*C.uchar)(&publicKey[0]), (*C.uchar)(&ed25519SecretKey[0]))
+	if result != 0 {
+		return nil, fmt.Errorf("crypto_sign_ed25519_sk_to_pk: error %d", result)
+	}
+
+	return publicKey, nil
 }
 
 var boxSecretKeyBytes = int(C.crypto_box_secretkeybytes())
@@ -84,6 +97,10 @@ var boxMacBytes = int(C.crypto_box_macbytes())
 
 func CreateBox(message []byte, nonce []byte, publicKey []byte,
 	secretKey []byte) ([]byte, error) {
+	// fmt.Printf("message   %x\n", message)
+	// fmt.Printf("nonce     %x\n", nonce)
+	// fmt.Printf("publicKey %x\n", publicKey)
+	// fmt.Printf("secretKey %x\n", secretKey)
 
 	mlen := len(message)
 	box := make([]byte, boxMacBytes+mlen)
@@ -99,7 +116,36 @@ func CreateBox(message []byte, nonce []byte, publicKey []byte,
 		return nil, fmt.Errorf("crypto_box_easy: error %d", result)
 	}
 
+	// fmt.Printf("box       %x\n", box)
+
 	return box, nil
+}
+
+func OpenBox(box []byte, nonce []byte, publicKey []byte,
+	secretKey []byte) ([]byte, error) {
+
+	// fmt.Printf("box       %x\n", box)
+	// fmt.Printf("nonce     %x\n", nonce)
+	// fmt.Printf("publicKey %x\n", publicKey)
+	// fmt.Printf("secretKey %x\n", secretKey)
+
+	boxlen := len(box)
+	message := make([]byte, boxlen-boxMacBytes)
+
+	result := C.crypto_box_open_easy(
+		(*C.uchar)(&message[0]),
+		(*C.uchar)(&box[0]),
+		C.ulonglong(boxlen),
+		(*C.uchar)(&nonce[0]),
+		(*C.uchar)(&publicKey[0]),
+		(*C.uchar)(&secretKey[0]))
+	if result != 0 {
+		return nil, fmt.Errorf("crypto_box_open_easy: error %d", result)
+	}
+
+	// fmt.Printf("message   %x\n", message)
+
+	return message, nil
 }
 
 var signBytes = int(C.crypto_sign_bytes())
@@ -165,28 +211,23 @@ var tagMessage = C.crypto_secretstream_xchacha20poly1305_tag_message()
 var tagFinal = C.crypto_secretstream_xchacha20poly1305_tag_final()
 
 type SecretStreamEncoder struct {
-	header []byte
-	state  C.crypto_secretstream_xchacha20poly1305_state
+	state C.crypto_secretstream_xchacha20poly1305_state
 }
 
-func NewSecretStreamEncoder(key []byte) (*SecretStreamEncoder, error) {
-	encoder := SecretStreamEncoder{
-		header: make([]byte, headerBytes),
-	}
+func NewSecretStreamEncoder(key []byte) (*SecretStreamEncoder, []byte, error) {
+	encoder := SecretStreamEncoder{}
+
+	header := make([]byte, headerBytes)
 
 	result := C.crypto_secretstream_xchacha20poly1305_init_push(
 		&encoder.state,
-		(*C.uchar)(&encoder.header[0]),
+		(*C.uchar)(&header[0]),
 		(*C.uchar)(&key[0]))
 	if result != 0 {
-		return nil, fmt.Errorf("crypto_secretstream_xchacha20poly1305_init_push: error %d", result)
+		return nil, nil, fmt.Errorf("crypto_secretstream_xchacha20poly1305_init_push: error %d", result)
 	}
 
-	return &encoder, nil
-}
-
-func (encoder *SecretStreamEncoder) Header() []byte {
-	return encoder.header
+	return &encoder, header, nil
 }
 
 func (encoder *SecretStreamEncoder) Encode(p []byte, ad []byte, final bool) ([]byte, error) {
@@ -215,6 +256,51 @@ func (encoder *SecretStreamEncoder) Encode(p []byte, ad []byte, final bool) ([]b
 	}
 
 	return c, nil
+}
+
+type SecretStreamDecoder struct {
+	state C.crypto_secretstream_xchacha20poly1305_state
+}
+
+func NewSecretStreamDecoder(key []byte, header []byte) (*SecretStreamDecoder, error) {
+	decoder := SecretStreamDecoder{}
+
+	result := C.crypto_secretstream_xchacha20poly1305_init_pull(
+		&decoder.state,
+		(*C.uchar)(&header[0]),
+		(*C.uchar)(&key[0]))
+	if result != 0 {
+		return nil, fmt.Errorf("crypto_secretstream_xchacha20poly1305_init_pull: error %d", result)
+	}
+
+	return &decoder, nil
+}
+
+func (decoder *SecretStreamDecoder) Decode(c []byte) ([]byte, error) {
+	cp, cl := plen(c)
+	m := make([]byte, cl-aBytes)
+
+	mp, _ := plen(m)
+	var ad []byte
+	adp, adl := plen(ad)
+
+	var tag C.uchar
+
+	result := C.crypto_secretstream_xchacha20poly1305_pull(
+		&decoder.state,
+		(*C.uchar)(mp),
+		(*C.ulonglong)(nil),
+		&tag,
+		(*C.uchar)(cp),
+		(C.ulonglong)(cl),
+		(*C.uchar)(adp),
+		(C.ulonglong)(adl),
+	)
+	if result != 0 {
+		return nil, fmt.Errorf("crypto_secretstream_xchacha20poly1305_pull: error %d", result)
+	}
+
+	return m, nil
 }
 
 func plen(b []byte) (unsafe.Pointer, int) {

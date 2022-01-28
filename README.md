@@ -20,5 +20,9 @@ understanding of libsodium. Use [age](https://age-encryption.org) and
 
 ## TODO
 
-* so many things
+* command line opts
+* authenticated header
+* compress text files
 * encrypt/decrypt on multiple threads
+* custom ChunkedReader to support variable-length chunks
+* so many things

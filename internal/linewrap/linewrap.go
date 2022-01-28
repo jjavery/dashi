@@ -13,9 +13,9 @@ type LineWriter struct {
 	err       error
 }
 
-func NewWriter(delim []byte, chunkSize int, out io.Writer) io.WriteCloser {
+func NewLineWriter(delim string, chunkSize int, out io.Writer) io.WriteCloser {
 	writer := LineWriter{
-		delim:     delim,
+		delim:     []byte(delim),
 		chunkSize: chunkSize,
 		out:       out,
 	}

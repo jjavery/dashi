@@ -1,12 +1,11 @@
 package dashi
 
 import (
-	"compress/zlib"
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"jjavery/dashi/internal/header"
-	"jjavery/dashi/internal/linewrap"
 	"jjavery/dashi/internal/secretstream"
 	"jjavery/dashi/internal/signature"
 	"jjavery/dashi/internal/sodium"
@@ -17,62 +16,68 @@ const chunkSize = 256
 var magic = "DASHI/0.1"
 var b64 = base64.RawStdEncoding.EncodeToString
 
+func GenerateKey(out io.Writer) error {
+	identity, err := NewIdentity()
+	if err != nil {
+		return err
+	}
+
+	io.WriteString(out, fmt.Sprintf("Public-Key: %s\r\n", b64(identity.PublicKey)))
+	io.WriteString(out, fmt.Sprintf("Secret-Key: %s\r\n", b64(identity.SecretKey)))
+
+	return nil
+}
+
 func Encrypt(identity Identity, recipients []Recipient,
 	in io.Reader, out io.Writer) error {
 
 	key := sodium.CreateSecretstreamKey()
+	ephemeral, err := NewIdentity()
+	if err != nil {
+		return err
+	}
 	nonce := sodium.CreateSecretboxNonce()
-	secretKey, err := sodium.ConvertEd25519SecretKeyToX25519(identity.SecretKey)
-	if err != nil {
-		return err
-	}
-	publicKey, err := sodium.ConvertEd25519SecretKeyToPublicKey(identity.SecretKey)
-	if err != nil {
-		return err
-	}
+	boxNonce := make([]byte, len(nonce))
+	copy(boxNonce, nonce)
 
 	var headerRecipients []header.Recipient
 
 	for _, recipient := range recipients {
-		publicKey, err := sodium.ConvertEd25519PublicKeyToX25519(recipient.PublicKey)
+
+		box, err := sodium.CreateBox(key, boxNonce, recipient.X25519PublicKey, ephemeral.X25519SecretKey)
 		if err != nil {
 			return err
 		}
 
-		box, err := sodium.CreateBox(key, nonce, publicKey, secretKey)
-		if err != nil {
-			return err
-		}
-
-		headerRecipient, err := header.NewRecipient(header.Ed25519, publicKey, box)
+		headerRecipient, err := header.NewRecipient(header.Ed25519, recipient.PublicKey, box)
 		if err != nil {
 			return err
 		}
 
 		headerRecipients = append(headerRecipients, *headerRecipient)
 
-		incrementNonce(nonce)
+		incrementNonce(boxNonce)
 	}
 
-	header, err := header.NewHeader(publicKey, nonce, headerRecipients)
+	header, err := header.NewHeader(identity.PublicKey, ephemeral.X25519PublicKey, nonce, headerRecipients)
 	if err != nil {
 		return err
 	}
 
 	header.Marshal(out)
 
-	lineWriter := linewrap.NewWriter([]byte("\r\n"), 66, out)
+	// linewrap := linewrap.NewLineWriter("\r\n", 66, out)
 
-	encoder := base64.NewEncoder(base64.RawStdEncoding, lineWriter)
+	// encode := base64.NewEncoder(base64.RawStdEncoding, linewrap)
 
-	writer, err := secretstream.NewSecretStreamWriter(key, chunkSize, encoder)
+	encrypt, err := secretstream.NewSecretStreamWriter(key, chunkSize, out)
 	if err != nil {
 		return err
 	}
 
-	compress := zlib.NewWriter(writer)
+	// compress := zlib.NewWriter(encrypt)
 
-	sign, err := signature.NewWriter(key, compress)
+	sign, err := signature.NewWriter(key, encrypt)
 	if err != nil {
 		return err
 	}
@@ -87,32 +92,32 @@ func Encrypt(identity Identity, recipients []Recipient,
 		return err
 	}
 
-	err = compress.Close()
+	// err = compress.Close()
+	// if err != nil {
+	// 	return err
+	// }
+
+	err = encrypt.Close()
 	if err != nil {
 		return err
 	}
 
-	err = writer.Close()
+	// err = encode.Close()
+	// if err != nil {
+	// 	return err
+	// }
+
+	// err = linewrap.Close()
+	// if err != nil {
+	// 	return err
+	// }
+
+	signature, err := sign.Sign(identity.SecretKey)
 	if err != nil {
 		return err
 	}
 
-	err = encoder.Close()
-	if err != nil {
-		return err
-	}
-
-	err = lineWriter.Close()
-	if err != nil {
-		return err
-	}
-
-	signature, err := sign.Sign(secretKey)
-	if err != nil {
-		return err
-	}
-
-	_, err = io.WriteString(out, "\r\n\r\nSignature:\r\n  "+b64(signature)+"\r\n")
+	_, err = io.WriteString(out, "\r\nSignature:\r\n  "+b64(signature)+"\r\n")
 	if err != nil {
 		return err
 	}
@@ -127,9 +132,53 @@ func Decrypt(identities []Identity, in io.Reader, out io.Writer) error {
 		return err
 	}
 
-	fmt.Println(header)
+	var key []byte
+	// publicKey := header.PublicKey
+	ephemeralKey := header.EphemeralKey
+	nonce := header.Nonce
+	boxNonce := make([]byte, len(nonce))
+	copy(boxNonce, nonce)
 
-	_, err = io.Copy(out, body)
+	for _, recipient := range header.Recipients {
+		for _, identity := range identities {
+			id := recipient.ID
+			if id != nil && bytes.Compare(id, identity.PublicKey) != 0 {
+				continue
+			}
+
+			box := recipient.Message
+
+			key, err = sodium.OpenBox(box, boxNonce, ephemeralKey, identity.X25519SecretKey)
+			if err != nil {
+				continue
+			}
+			break
+		}
+
+		if key != nil {
+			break
+		}
+
+		incrementNonce(boxNonce)
+	}
+
+	if key == nil || len(key) == 0 {
+		return fmt.Errorf("can't decrypt: no identity matches recipient(s)")
+	}
+
+	// decode := base64.NewDecoder(base64.RawStdEncoding, body)
+
+	decrypt, err := secretstream.NewSecretStreamReader(key, body)
+	if err != nil {
+		return err
+	}
+
+	// decompress, err := zlib.NewReader(decrypt)
+	// if err != nil {
+	// 	return err
+	// }
+
+	_, err = io.Copy(out, decrypt)
 	if err != nil {
 		return err
 	}
