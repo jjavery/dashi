@@ -1,7 +1,6 @@
 package dashi
 
 import (
-	"encoding/base64"
 	"jjavery/dashi/internal/sodium"
 )
 
@@ -11,7 +10,7 @@ type Recipient struct {
 }
 
 func NewRecipientFromPublicKeyString(publicKeyString string) (*Recipient, error) {
-	publicKey, err := base64.RawStdEncoding.DecodeString(publicKeyString)
+	publicKey, err := b32d(publicKeyString)
 	if err != nil {
 		return nil, err
 	}
@@ -25,4 +24,8 @@ func NewRecipientFromPublicKeyString(publicKeyString string) (*Recipient, error)
 		PublicKey:       publicKey,
 		X25519PublicKey: x25519PublicKey,
 	}, nil
+}
+
+func (recipient *Recipient) String() string {
+	return b32(recipient.PublicKey)
 }

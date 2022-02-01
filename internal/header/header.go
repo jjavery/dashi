@@ -3,9 +3,11 @@ package header
 import (
 	"bufio"
 	"bytes"
+	"encoding/base32"
 	"encoding/base64"
 	"fmt"
 	"io"
+	"jjavery/dashi/internal/signature"
 	"net/textproto"
 	"strings"
 )
@@ -15,6 +17,8 @@ const maxHeaderLength = 1024 * 1024
 
 var b64 = base64.RawStdEncoding.EncodeToString
 var b64d = base64.RawStdEncoding.DecodeString
+var b32 = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString
+var b32d = base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString
 
 type Header struct {
 	ProtocolVersion string
@@ -52,7 +56,7 @@ func NewHeader(publicKey []byte, ephemeralKey []byte,
 	return &header, nil
 }
 
-func (header *Header) Marshal(out io.Writer) error {
+func (header *Header) Marshal(secretKey []byte, out io.Writer) error {
 	var buf bytes.Buffer
 
 	_, err := buf.WriteString(header.ProtocolVersion)
@@ -70,7 +74,7 @@ func (header *Header) Marshal(out io.Writer) error {
 		return err
 	}
 
-	_, err = buf.WriteString(b64(header.PublicKey))
+	_, err = buf.WriteString(b32(header.PublicKey))
 	if err != nil {
 		return err
 	}
@@ -114,12 +118,21 @@ func (header *Header) Marshal(out io.Writer) error {
 		recipient.Marshal(&buf)
 	}
 
-	_, err = buf.WriteString("\r\n")
+	//
+	sign, err := signature.NewSignatureWriter(out)
 	if err != nil {
 		return err
 	}
 
-	out.Write(buf.Bytes())
+	sign.Write(buf.Bytes())
+	sign.Close()
+
+	sign.Marshal(secretKey, header.PublicKey, out)
+
+	_, err = io.WriteString(out, "\r\n")
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -153,7 +166,7 @@ func (recipient *Recipient) Marshal(out io.Writer) error {
 			return err
 		}
 
-		_, err = buf.WriteString(b64(recipient.ID))
+		_, err = buf.WriteString(b32(recipient.ID))
 		if err != nil {
 			return err
 		}
@@ -221,11 +234,11 @@ func Parse(in io.Reader) (*Header, io.Reader, error) {
 	if publicKeyHeaderFields[0] != string(Ed25519) {
 		return nil, nil, fmt.Errorf("Public-Key: unknown key type")
 	}
-	if len(publicKeyHeaderFields[1]) != 43 {
+	if len(publicKeyHeaderFields[1]) != 52 {
 		return nil, nil, fmt.Errorf("Public-Key: invalid length")
 	}
 
-	publicKey, err := b64d(publicKeyHeaderFields[1])
+	publicKey, err := b32d(publicKeyHeaderFields[1])
 	if err != nil {
 		return nil, nil, fmt.Errorf("Public-Key: %v", err)
 	}
@@ -295,7 +308,7 @@ func Parse(in io.Reader) (*Header, io.Reader, error) {
 			recipientHeaderID = recipientHeaderFields[1]
 			recipientHeaderMessage = recipientHeaderFields[2]
 
-			if len(recipientHeaderID) != 43 {
+			if len(recipientHeaderID) != 52 {
 				return nil, nil, fmt.Errorf("Recipient: invalid id length")
 			}
 		}
@@ -303,7 +316,7 @@ func Parse(in io.Reader) (*Header, io.Reader, error) {
 			return nil, nil, fmt.Errorf("Recipient: invalid message length")
 		}
 
-		recipientID, err := b64d(recipientHeaderID)
+		recipientID, err := b32d(recipientHeaderID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("Recipient: %v", err)
 		}

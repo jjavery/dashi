@@ -173,8 +173,10 @@ type GenericHash struct {
 func NewGenericHash(key []byte) (*GenericHash, error) {
 	hash := GenericHash{}
 
+	kp, kl := plen(key)
+
 	result := C.crypto_generichash_init(
-		&hash.state, (*C.uchar)(&key[0]), (C.size_t)(len(key)), (C.size_t)(genericHashBytes))
+		&hash.state, (*C.uchar)(kp), (C.size_t)(kl), (C.size_t)(genericHashBytes))
 	if result != 0 {
 		return nil, fmt.Errorf("crypto_generichash_init: error %d", result)
 	}

@@ -18,6 +18,32 @@ understanding of libsodium. Use [age](https://age-encryption.org) and
 [textproto.Reader](https://pkg.go.dev/net/textproto#Reader.ReadMIMEHeader)
 * HTTP-style chunked encoding
 
+## Usage
+
+```
+Usage:
+    dashi --keygen [-o OUTPUT]
+    dashi [--encrypt] [-i PATH] (-r RECIPIENT | -R PATH)... [--armor] [-o OUTPUT] [INPUT]
+    dashi --decrypt [-i PATH]... [-o OUTPUT] [INPUT]
+    dashi --sign [-o OUTPUT] [INPUT]
+    dashi --verify [INPUT]
+
+Options:
+    -k, --keygen                Generate a key pair.
+    -e, --encrypt               Encrypt the input to the output.
+    -d, --decrypt               Decrypt the input to the output. Default if omitted.
+    -s, --sign                  Sign the input to the output.
+    -v, --verify                Verify the input.
+    -o, --output OUTPUT         Write the result to the file at path OUTPUT.
+    -a, --armor                 Encrypt/sign to a Base64 encoded format.
+    -r, --recipient RECIPIENT   Encrypt to the specified RECIPIENT. Can be repeated.
+    -R, --recipients-file PATH  Encrypt to recipients listed at PATH. Can be repeated.
+    -i, --identity PATH         Use the identity file at PATH. Can be repeated with
+		                            decrypt or verify.
+    -n, --anon                  Encrypt to anonymous recipients with an anonymous
+                                identity.
+```
+
 ## TODO
 
 * command line opts

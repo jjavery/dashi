@@ -1,7 +1,6 @@
 package dashi
 
 import (
-	"encoding/base64"
 	"jjavery/dashi/internal/sodium"
 )
 
@@ -22,7 +21,7 @@ func NewIdentity() (*Identity, error) {
 }
 
 func NewIdentityFromSecretKeyString(secretKeyString string) (*Identity, error) {
-	secretKey, err := base64.RawStdEncoding.DecodeString(secretKeyString)
+	secretKey, err := b32d(secretKeyString)
 	if err != nil {
 		return nil, err
 	}
@@ -52,4 +51,12 @@ func NewIdentityFromKeyPair(secretKey []byte, publicKey []byte) (*Identity, erro
 		X25519SecretKey: x25519SecretKey,
 		X25519PublicKey: x25519PublicKey,
 	}, nil
+}
+
+func (identity *Identity) String() string {
+	return b32(identity.PublicKey)
+}
+
+func (identity *Identity) SecrectKeyString() string {
+	return b32(identity.SecretKey)
 }

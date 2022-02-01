@@ -2,10 +2,13 @@ package dashi
 
 import (
 	"bytes"
+	"compress/gzip"
+	"encoding/base32"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"jjavery/dashi/internal/header"
+	"jjavery/dashi/internal/linewrap"
 	"jjavery/dashi/internal/secretstream"
 	"jjavery/dashi/internal/signature"
 	"jjavery/dashi/internal/sodium"
@@ -15,6 +18,8 @@ const chunkSize = 256
 
 var magic = "DASHI/0.1"
 var b64 = base64.RawStdEncoding.EncodeToString
+var b32 = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString
+var b32d = base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString
 
 func GenerateKey(out io.Writer) error {
 	identity, err := NewIdentity()
@@ -22,8 +27,8 @@ func GenerateKey(out io.Writer) error {
 		return err
 	}
 
-	io.WriteString(out, fmt.Sprintf("Public-Key: %s\r\n", b64(identity.PublicKey)))
-	io.WriteString(out, fmt.Sprintf("Secret-Key: %s\r\n", b64(identity.SecretKey)))
+	io.WriteString(out, fmt.Sprintf("Public-Key: Ed25519 %s\r\n", identity.String()))
+	io.WriteString(out, fmt.Sprintf("Secret-Key: Ed25519 %s\r\n", identity.SecrectKeyString()))
 
 	return nil
 }
@@ -64,25 +69,62 @@ func Encrypt(identity Identity, recipients []Recipient,
 		return err
 	}
 
-	header.Marshal(out)
-
-	// linewrap := linewrap.NewLineWriter("\r\n", 66, out)
-
-	// encode := base64.NewEncoder(base64.RawStdEncoding, linewrap)
-
-	encrypt, err := secretstream.NewSecretStreamWriter(key, chunkSize, out)
+	sign, err := signature.NewSignatureWriter(out)
 	if err != nil {
 		return err
 	}
 
-	// compress := zlib.NewWriter(encrypt)
+	header.Marshal(identity.SecretKey, sign)
 
-	sign, err := signature.NewWriter(key, encrypt)
+	linewrap := linewrap.NewLineWriter("\r\n", 76, sign)
+
+	encode := base64.NewEncoder(base64.RawStdEncoding, linewrap)
+
+	var encryptTo io.Writer = sign
+	if true {
+		encryptTo = encode
+	}
+
+	encrypt, err := secretstream.NewSecretStreamWriter(key, chunkSize, encryptTo)
 	if err != nil {
 		return err
 	}
 
-	_, err = io.Copy(sign, in)
+	compress := gzip.NewWriter(encrypt)
+
+	innerSign, err := signature.NewSignatureWriter(compress)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(innerSign, in)
+	if err != nil {
+		return err
+	}
+
+	err = innerSign.Close()
+	if err != nil {
+		return err
+	}
+
+	innerSign.Marshal(identity.SecretKey, identity.PublicKey, compress)
+
+	err = compress.Close()
+	if err != nil {
+		return err
+	}
+
+	err = encrypt.Close()
+	if err != nil {
+		return err
+	}
+
+	err = encode.Close()
+	if err != nil {
+		return err
+	}
+
+	err = linewrap.Close()
 	if err != nil {
 		return err
 	}
@@ -92,35 +134,12 @@ func Encrypt(identity Identity, recipients []Recipient,
 		return err
 	}
 
-	// err = compress.Close()
-	// if err != nil {
-	// 	return err
-	// }
-
-	err = encrypt.Close()
+	_, err = io.WriteString(out, "\r\n\r\n")
 	if err != nil {
 		return err
 	}
 
-	// err = encode.Close()
-	// if err != nil {
-	// 	return err
-	// }
-
-	// err = linewrap.Close()
-	// if err != nil {
-	// 	return err
-	// }
-
-	signature, err := sign.Sign(identity.SecretKey)
-	if err != nil {
-		return err
-	}
-
-	_, err = io.WriteString(out, "\r\nSignature:\r\n  "+b64(signature)+"\r\n")
-	if err != nil {
-		return err
-	}
+	sign.Marshal(identity.SecretKey, identity.PublicKey, out)
 
 	return nil
 }
@@ -166,19 +185,24 @@ func Decrypt(identities []Identity, in io.Reader, out io.Writer) error {
 		return fmt.Errorf("can't decrypt: no identity matches recipient(s)")
 	}
 
-	// decode := base64.NewDecoder(base64.RawStdEncoding, body)
+	decode := base64.NewDecoder(base64.RawStdEncoding, body)
 
-	decrypt, err := secretstream.NewSecretStreamReader(key, body)
+	decrypt, err := secretstream.NewSecretStreamReader(key, decode)
 	if err != nil {
 		return err
 	}
 
-	// decompress, err := zlib.NewReader(decrypt)
-	// if err != nil {
-	// 	return err
-	// }
+	decompress, err := gzip.NewReader(decrypt)
+	if err != nil {
+		return err
+	}
 
-	_, err = io.Copy(out, decrypt)
+	readSig, err := signature.NewSignatureReader(decompress)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(out, readSig)
 	if err != nil {
 		return err
 	}
@@ -205,4 +229,11 @@ func incrementNonce(nonce []byte) {
 func Sign(identity Identity, in io.Reader, out io.Writer) (err error) {
 
 	return err
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
