@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"jjavery/dashi/internal/signature"
 	"net/textproto"
 	"strings"
 )
@@ -119,15 +118,16 @@ func (header *Header) Marshal(secretKey []byte, out io.Writer) error {
 	}
 
 	//
-	sign, err := signature.NewSignatureWriter(out)
-	if err != nil {
-		return err
-	}
+	// sign, err := signature.NewSignatureWriter(out)
+	// if err != nil {
+	// 	return err
+	// }
 
-	sign.Write(buf.Bytes())
-	sign.Close()
+	out.Write((buf.Bytes()))
+	// sign.Write(buf.Bytes())
+	// sign.Close()
 
-	sign.Marshal(secretKey, header.PublicKey, out)
+	// sign.Marshal(secretKey, header.PublicKey, out)
 
 	_, err = io.WriteString(out, "\r\n")
 	if err != nil {

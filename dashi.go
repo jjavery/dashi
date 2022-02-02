@@ -129,12 +129,12 @@ func Encrypt(identity Identity, recipients []Recipient,
 		return err
 	}
 
-	err = sign.Close()
+	_, err = io.WriteString(sign, "\r\n\r\n")
 	if err != nil {
 		return err
 	}
 
-	_, err = io.WriteString(out, "\r\n\r\n")
+	err = sign.Close()
 	if err != nil {
 		return err
 	}
@@ -146,7 +146,12 @@ func Encrypt(identity Identity, recipients []Recipient,
 
 func Decrypt(identities []Identity, in io.Reader, out io.Writer) error {
 
-	header, body, err := header.Parse(in)
+	cipherSig, err := signature.NewSignatureReader(in)
+	if err != nil {
+		return err
+	}
+
+	header, body, err := header.Parse(cipherSig)
 	if err != nil {
 		return err
 	}
@@ -197,15 +202,28 @@ func Decrypt(identities []Identity, in io.Reader, out io.Writer) error {
 		return err
 	}
 
-	readSig, err := signature.NewSignatureReader(decompress)
+	plainSig, err := signature.NewSignatureReader(decompress)
 	if err != nil {
 		return err
 	}
 
-	_, err = io.Copy(out, readSig)
+	_, err = io.Copy(out, plainSig)
 	if err != nil {
 		return err
 	}
+
+	plaintextVerified, err := plainSig.Verify(header.PublicKey)
+	if err != nil {
+		return err
+	}
+
+	ciphertextVerified, err := cipherSig.Verify(header.PublicKey)
+	// _, err = cipherSig.Verify(header.PublicKey)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(plaintextVerified, ciphertextVerified)
 
 	return nil
 }

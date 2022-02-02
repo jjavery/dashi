@@ -3,14 +3,15 @@ package signature
 import (
 	"bufio"
 	"bytes"
-	"encoding/base32"
 	"encoding/base64"
 	"io"
 	"jjavery/dashi/internal/sodium"
+	"strings"
+	"unicode"
 )
 
 var b64 = base64.RawStdEncoding.EncodeToString
-var b32 = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString
+var b64d = base64.RawStdEncoding.DecodeString
 
 type SignatureWriter struct {
 	hash  *sodium.GenericHash
@@ -129,9 +130,11 @@ const maxSignatureLen = 1024
 const signatureReaderBufferLen = 1024 * 32
 
 type SignatureReader struct {
-	hash *sodium.GenericHash
-	in   *bufio.Reader
-	err  error
+	hash      *sodium.GenericHash
+	in        *bufio.Reader
+	final     []byte
+	signature []byte
+	err       error
 }
 
 func NewSignatureReader(in io.Reader) (*SignatureReader, error) {
@@ -149,33 +152,57 @@ func NewSignatureReader(in io.Reader) (*SignatureReader, error) {
 }
 
 func (reader *SignatureReader) Read(p []byte) (n int, err error) {
-	var eof = false
-	n = len(p) + maxSignatureLen + 1
+	if reader.err != nil {
+		return 0, reader.err
+	}
 
-	peek, err := reader.in.Peek(n)
+	var eof = false
+	n = len(p) + maxSignatureLen
+
+	var peek []byte
+
+	peek, reader.err = reader.in.Peek(n)
 	if len(peek) < n {
 		// EOF coming up. Check for a signature at the end
-		i := bytes.LastIndex(peek, []byte("Signature:"))
+		delimiter := []byte("Signature:")
+		i := bytes.LastIndex(peek, delimiter)
+		s := peek[(i + len(delimiter)):]
+		reader.signature, reader.err = b64d(stripSpaces(string(s)))
+		if reader.err != nil {
+			return 0, reader.err
+		}
 		p = p[:i]
 		eof = true
-	} else if err != nil {
-		return 0, err
+	} else if reader.err != nil {
+		return 0, reader.err
 	}
 
-	n, err = reader.in.Read(p)
-	if err != nil {
-		return n, err
+	n, reader.err = reader.in.Read(p)
+	if reader.err != nil {
+		return n, reader.err
 	}
 
-	err = reader.hash.Update(p)
-	if err != nil {
-		return n, err
+	reader.err = reader.hash.Update(p)
+	if reader.err != nil {
+		return n, reader.err
 	}
 
 	if eof {
-		return n, io.EOF
+		reader.final, reader.err = reader.hash.Final()
+		if reader.err != nil {
+			return n, reader.err
+		}
+
+		reader.err = io.EOF
+
+		return n, reader.err
 	}
+
 	return n, nil
+}
+
+func (reader *SignatureReader) Verify(publicKey []byte) (bool, error) {
+	return sodium.VerifyDetached(reader.signature, reader.final, publicKey)
 }
 
 func min(a, b int) int {
@@ -183,4 +210,13 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func stripSpaces(str string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, str)
 }

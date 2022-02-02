@@ -142,17 +142,22 @@ func (reader *SecretStreamReader) Read(p []byte) (int, error) {
 		return 0, chunkErr
 	}
 
-	cleartext, err := reader.decoder.Decode(chunk[0:l])
-	if err != nil {
-		return 0, err
-	}
+	if chunkErr != io.EOF {
+		plaintext, err := reader.decoder.Decode(chunk[0:l])
+		if err != nil {
+			return 0, err
+		}
 
-	_, err = reader.buf.Write(cleartext)
-	if err != nil {
-		return 0, err
+		_, err = reader.buf.Write(plaintext)
+		if err != nil {
+			return 0, err
+		}
 	}
 
 	n, err := reader.buf.Read(p)
+	if err != nil {
+		return n, err
+	}
 
 	return n, chunkErr
 }

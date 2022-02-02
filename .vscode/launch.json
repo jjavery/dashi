@@ -5,7 +5,22 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Launch Package",
+      "name": "Encrypt",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/dashi/",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--encrypt",
+        "-i=test.secret",
+        "-r=XUESSUZJTCPJT7THPA4TSRM6EQ32HVY57COGWVZCRVXXNSMGMCNA",
+        "-o=test.enc",
+        "test.txt"
+      ]
+    },
+    {
+      "name": "Decrypt",
       "type": "go",
       "request": "launch",
       "mode": "auto",
@@ -14,7 +29,6 @@
       "args": [
         "--decrypt",
         "-i=test.secret",
-        // "-r=F7TB6RJ24O7RDYBLOOACFNJVKVR3NZ2BPRRQJNVAMNEYYCEDNERA",
         "-o=-",
         "test.enc"
       ]

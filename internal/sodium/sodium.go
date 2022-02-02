@@ -158,10 +158,23 @@ func SignDetached(message []byte, secretKey []byte) ([]byte, error) {
 		(*C.uchar)(&message[0]), C.ulonglong(len(message)),
 		(*C.uchar)(&secretKey[0]))
 	if result != 0 {
-		return nil, fmt.Errorf("crypto_box_easy: error %d", result)
+		return nil, fmt.Errorf("crypto_sign_detached: error %d", result)
 	}
 
 	return sig, nil
+}
+
+func VerifyDetached(signature []byte, message []byte, publicKey []byte) (bool, error) {
+	mp, ml := plen(message)
+
+	result := C.crypto_sign_verify_detached((*C.uchar)(&signature[0]),
+		(*C.uchar)(mp), C.ulonglong(ml),
+		(*C.uchar)(&publicKey[0]))
+	if result != 0 {
+		return false, fmt.Errorf("crypto_sign_verify_detached: error %d", result)
+	}
+
+	return true, nil
 }
 
 var genericHashBytes = int(C.crypto_generichash_bytes())
@@ -185,8 +198,10 @@ func NewGenericHash(key []byte) (*GenericHash, error) {
 }
 
 func (hash *GenericHash) Update(in []byte) error {
+	inp, inl := plen(in)
+
 	result := C.crypto_generichash_update(
-		&hash.state, (*C.uchar)(&in[0]), C.ulonglong(len(in)))
+		&hash.state, (*C.uchar)(inp), C.ulonglong(inl))
 	if result != 0 {
 		return fmt.Errorf("crypto_generichash_update: error %d", result)
 	}
