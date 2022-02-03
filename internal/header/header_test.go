@@ -19,7 +19,7 @@ var nonce, _ = b64d("gN2Wfzgk4GA+KI4GThTO3+mUIeHyt0jc")
 var recipientID, _ = b32d("XUESSUZJTCPJT7THPA4TSRM6EQ32HVY57COGWVZCRVXXNSMGMCNA")
 var recipientMessage, _ = b64d("PU9JZcrrvdsjyT0bpAG98nqsy1qMiH/ulEi894IwLnriUtFRY1G/T3MuGqoRAZBZ")
 
-var headerString = strings.ReplaceAll(`DASHI/0.0.1
+var headerString = strings.ReplaceAll(`DASHI/0.1
 Public-Key: Ed25519 XUESSUZJTCPJT7THPA4TSRM6EQ32HVY57COGWVZCRVXXNSMGMCNA
 Ephemeral-Key: X25519 N3LqVa4YeQhkwOyGR8L49lI3aSkj0pQghSiZ/AuuoRg
 Nonce: gN2Wfzgk4GA+KI4GThTO3+mUIeHyt0jc

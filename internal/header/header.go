@@ -9,9 +9,10 @@ import (
 	"io"
 	"net/textproto"
 	"strings"
+	"unicode"
 )
 
-const protocolVersion = "DASHI/0.0.1"
+const protocolVersion = "DASHI/0.1"
 const maxHeaderLength = 1024 * 1024
 
 var b64 = base64.RawStdEncoding.EncodeToString
@@ -25,7 +26,7 @@ type Header struct {
 	EphemeralKey    []byte
 	Nonce           []byte
 	Recipients      []Recipient
-	HMAC            []byte
+	Encoding        []string
 }
 
 type KeyType string
@@ -33,6 +34,13 @@ type KeyType string
 const (
 	Ed25519 KeyType = "Ed25519"
 	X25519  KeyType = "X25519"
+)
+
+type EncodingType string
+
+const (
+	Gzip   KeyType = "gzip"
+	Base64 KeyType = "base64"
 )
 
 type Recipient struct {
@@ -115,6 +123,11 @@ func (header *Header) Marshal(secretKey []byte, out io.Writer) error {
 
 	for _, recipient := range header.Recipients {
 		recipient.Marshal(&buf)
+	}
+
+	_, err = buf.WriteString("Encoding: gzip, base64\r\n")
+	if err != nil {
+		return err
 	}
 
 	//
@@ -243,7 +256,7 @@ func Parse(in io.Reader) (*Header, io.Reader, error) {
 		return nil, nil, fmt.Errorf("Public-Key: %v", err)
 	}
 
-	// Public Key
+	// Ephemeral Key
 	ephemeralKeyHeader := mimeHeader.Get("Ephemeral-Key")
 	if ephemeralKeyHeader == "" {
 		return nil, nil, fmt.Errorf("Ephemeral-Key: header is required")
@@ -334,12 +347,22 @@ func Parse(in io.Reader) (*Header, io.Reader, error) {
 		recipients = append(recipients, *recipient)
 	}
 
+	// Encoding
+	encodingHeader := mimeHeader.Get("Encoding")
+	if encodingHeader == "" {
+		return nil, nil, fmt.Errorf("Encoding: header is required")
+	}
+
+	encoding := strings.FieldsFunc(encodingHeader,
+		func(r rune) bool { return unicode.IsSpace(r) || r == ',' })
+
 	header := Header{
 		ProtocolVersion: protocolVersionLine,
 		PublicKey:       publicKey,
 		EphemeralKey:    ephemeralKey,
 		Nonce:           nonce,
 		Recipients:      recipients,
+		Encoding:        encoding,
 	}
 
 	return &header, body, nil

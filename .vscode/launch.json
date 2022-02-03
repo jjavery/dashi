@@ -14,7 +14,7 @@
       "args": [
         "--encrypt",
         "-i=test.secret",
-        "-r=XUESSUZJTCPJT7THPA4TSRM6EQ32HVY57COGWVZCRVXXNSMGMCNA",
+        "-R=test.recipients",
         "-o=test.enc",
         "test.txt"
       ]
@@ -26,11 +26,29 @@
       "mode": "auto",
       "program": "${workspaceFolder}/cmd/dashi/",
       "cwd": "${workspaceFolder}",
+      "args": ["--decrypt", "-i=test.secret", "-o=-", "test.enc"]
+    },
+    {
+      "name": "Sign",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/dashi/",
+      "cwd": "${workspaceFolder}",
+      "args": ["--sign", "-i=test.secret", "-o=test.signed", "test.txt"]
+    },
+    {
+      "name": "Verify",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/dashi/",
+      "cwd": "${workspaceFolder}",
       "args": [
-        "--decrypt",
-        "-i=test.secret",
-        "-o=-",
-        "test.enc"
+        "--verify",
+        "-r=XUESSUZJTCPJT7THPA4TSRM6EQ32HVY57COGWVZCRVXXNSMGMCNA",
+        // "-o=-",
+        "test.signed"
       ]
     }
   ]

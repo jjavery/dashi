@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/base32"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"jjavery/dashi/internal/header"
@@ -69,7 +70,7 @@ func Encrypt(identity Identity, recipients []Recipient,
 		return err
 	}
 
-	sign, err := signature.NewSignatureWriter(out)
+	sign, err := signature.NewSignatureWriter(identity.SecretKey, out)
 	if err != nil {
 		return err
 	}
@@ -92,7 +93,7 @@ func Encrypt(identity Identity, recipients []Recipient,
 
 	compress := gzip.NewWriter(encrypt)
 
-	innerSign, err := signature.NewSignatureWriter(compress)
+	innerSign, err := signature.NewSignatureWriter(identity.SecretKey, compress)
 	if err != nil {
 		return err
 	}
@@ -106,8 +107,6 @@ func Encrypt(identity Identity, recipients []Recipient,
 	if err != nil {
 		return err
 	}
-
-	innerSign.Marshal(identity.SecretKey, identity.PublicKey, compress)
 
 	err = compress.Close()
 	if err != nil {
@@ -139,13 +138,10 @@ func Encrypt(identity Identity, recipients []Recipient,
 		return err
 	}
 
-	sign.Marshal(identity.SecretKey, identity.PublicKey, out)
-
 	return nil
 }
 
 func Decrypt(identities []Identity, in io.Reader, out io.Writer) error {
-
 	cipherSig, err := signature.NewSignatureReader(in)
 	if err != nil {
 		return err
@@ -212,18 +208,15 @@ func Decrypt(identities []Identity, in io.Reader, out io.Writer) error {
 		return err
 	}
 
-	plaintextVerified, err := plainSig.Verify(header.PublicKey)
+	_, err = plainSig.Verify(header.PublicKey)
 	if err != nil {
-		return err
+		return SignatureNotVerified
 	}
 
-	ciphertextVerified, err := cipherSig.Verify(header.PublicKey)
-	// _, err = cipherSig.Verify(header.PublicKey)
+	_, err = cipherSig.Verify(header.PublicKey)
 	if err != nil {
-		return err
+		return SignatureNotVerified
 	}
-
-	fmt.Println(plaintextVerified, ciphertextVerified)
 
 	return nil
 }
@@ -245,9 +238,44 @@ func incrementNonce(nonce []byte) {
 }
 
 func Sign(identity Identity, in io.Reader, out io.Writer) (err error) {
+	sign, err := signature.NewSignatureWriter(identity.SecretKey, out)
+	if err != nil {
+		return err
+	}
 
-	return err
+	_, err = io.Copy(sign, in)
+	if err != nil {
+		return err
+	}
+
+	err = sign.Close()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
+
+func Verify(recipient Recipient, in io.Reader, out io.Writer) error {
+	sign, err := signature.NewSignatureReader(in)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(out, sign)
+	if err != nil {
+		return err
+	}
+
+	_, err = sign.Verify(recipient.PublicKey)
+	if err != nil {
+		return SignatureNotVerified
+	}
+
+	return nil
+}
+
+var SignatureNotVerified = errors.New("!!! SIGNATURE IS NOT VALID !!!")
 
 func min(a, b int) int {
 	if a < b {

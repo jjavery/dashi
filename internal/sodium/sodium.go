@@ -177,6 +177,58 @@ func VerifyDetached(signature []byte, message []byte, publicKey []byte) (bool, e
 	return true, nil
 }
 
+type SignHash struct {
+	state C.struct_crypto_sign_ed25519ph_state
+}
+
+func NewSignHash() (*SignHash, error) {
+	hash := SignHash{}
+
+	result := C.crypto_sign_init(&hash.state)
+	if result != 0 {
+		return nil, fmt.Errorf("crypto_sign_init: error %d", result)
+	}
+
+	return &hash, nil
+}
+
+func (hash *SignHash) Update(m []byte) error {
+	mp, mlen := plen(m)
+
+	result := C.crypto_sign_update(
+		&hash.state, (*C.uchar)(mp), C.ulonglong(mlen))
+	if result != 0 {
+		return fmt.Errorf("crypto_sign_update: error %d", result)
+	}
+
+	return nil
+}
+
+func (hash *SignHash) Final(secretKey []byte) ([]byte, error) {
+	sig := make([]byte, signBytes)
+	var siglen C.ulonglong
+
+	result := C.crypto_sign_final_create(
+		&hash.state, (*C.uchar)(&sig[0]), &siglen,
+		(*C.uchar)(&secretKey[0]))
+	if result != 0 {
+		return nil, fmt.Errorf("crypto_sign_final_create: error %d", result)
+	}
+
+	return sig, nil
+}
+
+func (hash *SignHash) Verify(signature []byte, publicKey []byte) (bool, error) {
+	result := C.crypto_sign_final_verify(
+		&hash.state, (*C.uchar)(&signature[0]),
+		(*C.uchar)(&publicKey[0]))
+	if result != 0 {
+		return false, fmt.Errorf("crypto_sign_final_verify: error %d", result)
+	}
+
+	return true, nil
+}
+
 var genericHashBytes = int(C.crypto_generichash_bytes())
 
 type GenericHash struct {

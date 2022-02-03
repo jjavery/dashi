@@ -7,6 +7,8 @@ import (
 	"jjavery/dashi/internal/sodium"
 )
 
+const chunkSize = 256
+
 type SecretStreamWriter struct {
 	encoder       *sodium.SecretStreamEncoder
 	chunkedWriter io.WriteCloser
@@ -104,6 +106,7 @@ type SecretStreamReader struct {
 	chunkedReader io.Reader
 	in            io.Reader
 	buf           bytes.Buffer
+	eof           bool
 	err           error
 }
 
@@ -131,35 +134,47 @@ func NewSecretStreamReader(key []byte, in io.Reader) (*SecretStreamReader, error
 }
 
 func (reader *SecretStreamReader) Read(p []byte) (int, error) {
+	if reader.err != nil {
+		return 0, reader.err
+	}
 	if reader.buf.Len() > 0 {
 		return reader.buf.Read(p)
 	}
-
-	chunk := make([]byte, 273)
-
-	l, chunkErr := reader.chunkedReader.Read(chunk)
-	if chunkErr != nil && chunkErr != io.EOF {
-		return 0, chunkErr
+	if reader.eof {
+		return 0, io.EOF
 	}
 
-	if chunkErr != io.EOF {
-		plaintext, err := reader.decoder.Decode(chunk[0:l])
-		if err != nil {
-			return 0, err
-		}
+	chunk := make([]byte, chunkSize+17)
 
-		_, err = reader.buf.Write(plaintext)
-		if err != nil {
-			return 0, err
-		}
+	l, err := reader.chunkedReader.Read(chunk)
+	if err == io.EOF {
+		reader.eof = true
+	} else if err != nil {
+		return 0, err
 	}
 
-	n, err := reader.buf.Read(p)
+	plaintext, err := reader.decoder.Decode(chunk[0:l])
+	if err != nil {
+		return 0, err
+	}
+
+	n := len(plaintext)
+	if n < len(p) {
+		copy(p, plaintext)
+		return n, nil
+	}
+
+	_, err = reader.buf.Write(plaintext)
+	if err != nil {
+		return 0, err
+	}
+
+	n, err = reader.buf.Read(p)
 	if err != nil {
 		return n, err
 	}
 
-	return n, chunkErr
+	return n, nil
 }
 
 func min(a, b int) int {

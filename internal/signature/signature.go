@@ -14,21 +14,23 @@ var b64 = base64.RawStdEncoding.EncodeToString
 var b64d = base64.RawStdEncoding.DecodeString
 
 type SignatureWriter struct {
-	hash  *sodium.GenericHash
-	out   io.Writer
-	final []byte
-	err   error
+	secretKey []byte
+	hash      *sodium.SignHash
+	out       io.Writer
+	signature []byte
+	err       error
 }
 
-func NewSignatureWriter(out io.Writer) (*SignatureWriter, error) {
-	hash, err := sodium.NewGenericHash(nil)
+func NewSignatureWriter(secretKey []byte, out io.Writer) (*SignatureWriter, error) {
+	hash, err := sodium.NewSignHash()
 	if err != nil {
 		return nil, err
 	}
 
 	writer := SignatureWriter{
-		hash: hash,
-		out:  out,
+		secretKey: secretKey,
+		hash:      hash,
+		out:       out,
 	}
 
 	return &writer, nil
@@ -42,17 +44,18 @@ func (writer *SignatureWriter) Write(p []byte) (n int, err error) {
 		return 0, nil
 	}
 
-	writer.err = writer.hash.Update(p)
-	if writer.err != nil {
-		return 0, writer.err
+	n, writer.err = writer.write(p)
+
+	return n, writer.err
+}
+
+func (writer *SignatureWriter) write(p []byte) (n int, err error) {
+	err = writer.hash.Update(p)
+	if err != nil {
+		return 0, err
 	}
 
-	_, writer.err = writer.out.Write(p)
-	if writer.err != nil {
-		return 0, writer.err
-	}
-
-	return len(p), nil
+	return writer.out.Write(p)
 }
 
 func (writer *SignatureWriter) Close() error {
@@ -60,37 +63,28 @@ func (writer *SignatureWriter) Close() error {
 		return writer.err
 	}
 
-	writer.final, writer.err = writer.hash.Final()
+	writer.err = writer.close()
 
 	return writer.err
 }
 
-func (writer *SignatureWriter) Sign(secretKey []byte) ([]byte, error) {
-	signature, err := sodium.SignDetached(writer.final, secretKey)
-	if err != nil {
-		return nil, err
-	}
-
-	return signature, nil
-}
-
-func (writer *SignatureWriter) Verify(publicKey []byte, signature []byte) (bool, error) {
-	return false, nil
-}
-
-func (writer *SignatureWriter) Marshal(secretKey []byte, publicKey []byte, out io.Writer) error {
-	// out := writer.out
-
-	signature, err := sodium.SignDetached(writer.final, secretKey)
+func (writer *SignatureWriter) close() (err error) {
+	writer.signature, err = writer.hash.Final(writer.secretKey)
 	if err != nil {
 		return err
 	}
 
-	encSig := b64(signature)
+	return writer.marshal()
+}
+
+func (writer *SignatureWriter) marshal() error {
+	out := writer.out
+
+	encSig := b64(writer.signature)
 	encSigLen := len(encSig)
 	lineLen := encSigLen / (encSigLen/74 + 1)
 
-	_, err = io.WriteString(out, "Signature:")
+	_, err := io.WriteString(out, "Signature:")
 	// _, err = io.WriteString(out, "Signature: Ed25519 ")
 	// if err != nil {
 	// 	return err
@@ -127,25 +121,28 @@ func (writer *SignatureWriter) Marshal(secretKey []byte, publicKey []byte, out i
 }
 
 const maxSignatureLen = 1024
-const signatureReaderBufferLen = 1024 * 32
+const signatureReaderBufferLen = 1024*32 + maxSignatureLen
 
 type SignatureReader struct {
-	hash      *sodium.GenericHash
+	hash      *sodium.SignHash
 	in        *bufio.Reader
-	final     []byte
+	in2       io.Reader
+	buf       []byte
 	signature []byte
 	err       error
 }
 
 func NewSignatureReader(in io.Reader) (*SignatureReader, error) {
-	hash, err := sodium.NewGenericHash(nil)
+	hash, err := sodium.NewSignHash()
 	if err != nil {
 		return nil, err
 	}
 
 	reader := SignatureReader{
+		in:   bufio.NewReaderSize(in, signatureReaderBufferLen),
+		in2:  in,
+		buf:  make([]byte, signatureReaderBufferLen),
 		hash: hash,
-		in:   bufio.NewReader(in),
 	}
 
 	return &reader, nil
@@ -156,53 +153,60 @@ func (reader *SignatureReader) Read(p []byte) (n int, err error) {
 		return 0, reader.err
 	}
 
+	n, reader.err = reader.read(p)
+
+	return n, reader.err
+}
+
+func (reader *SignatureReader) read2(p []byte) (n int, err error) {
+	n, err = reader.in2.Read(reader.buf)
+
+	copy(p, reader.buf[:n])
+
+	return n, err
+}
+
+func (reader *SignatureReader) read(p []byte) (n int, err error) {
 	var eof = false
-	n = len(p) + maxSignatureLen
+	n = min(signatureReaderBufferLen, len(p)+maxSignatureLen)
 
 	var peek []byte
 
-	peek, reader.err = reader.in.Peek(n)
-	if len(peek) < n {
+	peek, err = reader.in.Peek(n)
+	if len(peek) < n && err == io.EOF {
 		// EOF coming up. Check for a signature at the end
 		delimiter := []byte("Signature:")
 		i := bytes.LastIndex(peek, delimiter)
 		s := peek[(i + len(delimiter)):]
-		reader.signature, reader.err = b64d(stripSpaces(string(s)))
-		if reader.err != nil {
-			return 0, reader.err
+		reader.signature, err = b64d(stripSpaces(string(s)))
+		if err != nil {
+			return 0, err
 		}
 		p = p[:i]
 		eof = true
-	} else if reader.err != nil {
-		return 0, reader.err
+	} else if err != nil {
+		return 0, err
 	}
 
-	n, reader.err = reader.in.Read(p)
-	if reader.err != nil {
-		return n, reader.err
+	n, err = reader.in.Read(p)
+	if err != nil {
+		return n, err
 	}
 
-	reader.err = reader.hash.Update(p)
-	if reader.err != nil {
-		return n, reader.err
+	err = reader.hash.Update(p)
+	if err != nil {
+		return n, err
 	}
 
 	if eof {
-		reader.final, reader.err = reader.hash.Final()
-		if reader.err != nil {
-			return n, reader.err
-		}
-
-		reader.err = io.EOF
-
-		return n, reader.err
+		return n, io.EOF
 	}
 
 	return n, nil
 }
 
 func (reader *SignatureReader) Verify(publicKey []byte) (bool, error) {
-	return sodium.VerifyDetached(reader.signature, reader.final, publicKey)
+	return reader.hash.Verify(reader.signature, publicKey)
 }
 
 func min(a, b int) int {

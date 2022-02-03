@@ -1,26 +1,25 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"jjavery/dashi"
+	"jjavery/dashi/internal/header"
 	"log"
+	"net/textproto"
 	"os"
+	"os/user"
+	"path/filepath"
 	"runtime/debug"
+	"strings"
+	"unicode"
 
 	"golang.org/x/term"
 )
-
-// var identity, _ = dashi.NewIdentityFromSecretKeyString(
-// 	"4PTEBTQXOEM32MGN5LO55FVUGYJXN6U6HQ5Y3FKLBVVRUALMR2N3NJKHW5JT76ASLSSNUWEDB5O66HA6LSYKJB3NSIAJ2PQWSDC6P4Q")
-var r3Identity, _ = dashi.NewIdentityFromSecretKeyString(
-	"PSC5XDCRXXT47CBYWWOQM2ZMMGKDR562XXQOV52HGDM7CW3VHSJ32CJJKMUZRHUZ7ZTXQOJZIWPCIN5D24O7RHDLK4RI233WZGDGBGQ")
-
-var r1, _ = dashi.NewRecipientFromPublicKeyString("TVGC5UIZ47WOBRJS7QIZPD3FEOZ5ZLQNUVXYIP4APFSUHUFCSYBQ")
-var r2, _ = dashi.NewRecipientFromPublicKeyString("E42442EKFHZXIZBWPVIEJZQJOBTSS6X6RJ7446GUF7A6QO274SYQ")
-var r3, _ = dashi.NewRecipientFromPublicKeyString("XUESSUZJTCPJT7THPA4TSRM6EQ32HVY57COGWVZCRVXXNSMGMCNA")
 
 type multiFlag []string
 
@@ -74,9 +73,12 @@ Example:
 var Version string
 var stdinInUse bool
 
-const defaultIdentityFile = "~/.dashi/identity"
+var defaultIdentityFile = ".dashi/identity"
 
 func main() {
+	usr, _ := user.Current()
+	defaultIdentityFile = filepath.Join(usr.HomeDir, defaultIdentityFile)
+
 	log.SetFlags(0)
 	flag.Usage = func() { fmt.Fprintf(os.Stderr, "%s\n", usage) }
 
@@ -140,6 +142,55 @@ func main() {
 	}
 	switch {
 	case keygenFlag:
+		if encryptFlag {
+			errorf("-e/--encrypt can't be used with -k/--keygen")
+		}
+		if decryptFlag {
+			errorf("-d/--decrypt can't be used with -k/--keygen")
+		}
+		if signFlag {
+			errorf("-s/--sign can't be used with -k/--keygen")
+		}
+		if verifyFlag {
+			errorf("-v/--verify can't be used with -k/--keygen")
+		}
+		if armorFlag {
+			errorWithHint("-a/--armor can't be used with -k/--keygen")
+		}
+	case signFlag:
+		if encryptFlag {
+			errorf("-e/--encrypt can't be used with -s/--sign")
+		}
+		if decryptFlag {
+			errorf("-d/--decrypt can't be used with -s/--sign")
+		}
+		if verifyFlag {
+			errorf("-v/--verify can't be used with -s/--sign")
+		}
+		if armorFlag {
+			errorWithHint("-a/--armor can't be used with -s/--sign")
+		}
+		if len(identityFlags) == 0 {
+			if !fileExists(defaultIdentityFile) {
+				errorWithHint("-i/--identity is required with -s/--sign",
+					"or create a default identity file in '"+defaultIdentityFile+"'")
+			}
+			identityFlags = append(identityFlags, defaultIdentityFile)
+		}
+		if len(identityFlags) > 1 {
+			errorWithHint("multiple -i/--identity arguments can't be used with -s/--sign",
+				"did you mean to use -d/--decrypt?")
+		}
+	case verifyFlag:
+		if encryptFlag {
+			errorf("-e/--encrypt can't be used with -v/--verify")
+		}
+		if decryptFlag {
+			errorf("-d/--decrypt can't be used with -v/--verify")
+		}
+		if armorFlag {
+			errorWithHint("-a/--armor can't be used with -v/--verify")
+		}
 	case decryptFlag:
 		if encryptFlag {
 			errorf("-e/--encrypt can't be used with -d/--decrypt")
@@ -170,6 +221,7 @@ func main() {
 				errorWithHint("-i/--identity is required with -e/--encrypt",
 					"or create a default identity file in '"+defaultIdentityFile+"'")
 			}
+			identityFlags = append(identityFlags, defaultIdentityFile)
 		}
 		if len(identityFlags) > 1 {
 			errorWithHint("multiple -i/--identity arguments can't be used with -e/--encrypt",
@@ -193,6 +245,7 @@ func main() {
 
 	var in io.Reader = os.Stdin
 	var out io.Writer = os.Stdout
+
 	if name := flag.Arg(0); name != "" && name != "-" {
 		f, err := os.Open(name)
 		if err != nil {
@@ -203,6 +256,7 @@ func main() {
 	} else {
 		stdinInUse = true
 	}
+
 	if name := outFlag; name != "" && name != "-" {
 		f := newLazyOpener(name)
 		defer func() {
@@ -211,9 +265,11 @@ func main() {
 			}
 		}()
 		out = f
+	} else if verifyFlag {
+		out = ioutil.Discard
 	} else if term.IsTerminal(int(os.Stdout.Fd())) {
 		if name != "-" {
-			if decryptFlag || keygenFlag {
+			if decryptFlag || keygenFlag || verifyFlag {
 				// TODO: buffer the output and check it's printable.
 			} else if !armorFlag {
 				// If the output wouldn't be armored, refuse to send binary to
@@ -223,6 +279,7 @@ func main() {
 					`force anyway with "-o -"`)
 			}
 		}
+
 		if in == os.Stdin && term.IsTerminal(int(os.Stdin.Fd())) {
 			// If the input comes from a TTY and output will go to a TTY,
 			// buffer it up so it doesn't get in the way of typing the input.
@@ -235,6 +292,10 @@ func main() {
 	switch {
 	case keygenFlag:
 		generateKey(out)
+	case signFlag:
+		sign(identityFlags, in, out)
+	case verifyFlag:
+		verify(recipientFlags, recipientsFileFlags, in, out)
 	case decryptFlag:
 		decrypt(identityFlags, in, out)
 	// case passFlag:
@@ -246,31 +307,54 @@ func main() {
 	default:
 		encrypt(recipientFlags, recipientsFileFlags, identityFlags, in, out, armorFlag)
 	}
-
-	// err := run()
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
 }
 
-// func run() error {
-// 	err := generateKey()
-// 	if err != nil {
-// 		return err
-// 	}
+func generateKey(out io.Writer) error {
+	return dashi.GenerateKey(out)
+}
 
-// 	err = encrypt()
-// 	if err != nil {
-// 		return err
-// 	}
+func sign(identityFiles []string, in io.Reader, out io.Writer) {
+	var identities []dashi.Identity
 
-// 	err = decrypt()
-// 	if err != nil {
-// 		return err
-// 	}
+	for _, name := range identityFiles {
+		i, err := parseIdentitiesFile(name)
+		if err != nil {
+			errorf("reading %q: %v", name, err)
+		}
+		identities = append(identities, i...)
+	}
 
-// 	return nil
-// }
+	err := dashi.Sign(identities[0], in, out)
+	if err != nil {
+		errorf("%v", err)
+	}
+}
+
+func verify(recipientKeys, recipientFiles []string,
+	in io.Reader, out io.Writer) {
+
+	var recipients []dashi.Recipient
+
+	for _, publicKey := range recipientKeys {
+		recipient, err := dashi.NewRecipientFromPublicKeyString(publicKey)
+		if err != nil {
+			errorf("%v", err)
+		}
+		recipients = append(recipients, *recipient)
+	}
+	for _, name := range recipientFiles {
+		r, err := parseRecipientsFile(name)
+		if err != nil {
+			errorf("failed to parse recipient file %q: %v", name, err)
+		}
+		recipients = append(recipients, r...)
+	}
+
+	err := dashi.Verify(recipients[0], in, out)
+	if err != nil {
+		errorf("%v", err)
+	}
+}
 
 func encrypt(recipientKeys, recipientFiles, identityFiles []string,
 	in io.Reader, out io.Writer, armor bool) {
@@ -285,17 +369,17 @@ func encrypt(recipientKeys, recipientFiles, identityFiles []string,
 		}
 		recipients = append(recipients, *recipient)
 	}
-	for _, path := range recipientFiles {
-		r, err := parseRecipientsFile(path)
+	for _, name := range recipientFiles {
+		r, err := parseRecipientsFile(name)
 		if err != nil {
-			errorf("failed to parse recipient file %q: %v", path, err)
+			errorf("failed to parse recipient file %q: %v", name, err)
 		}
 		recipients = append(recipients, r...)
 	}
-	for _, path := range identityFiles {
-		i, err := parseIdentitiesFile(path)
+	for _, name := range identityFiles {
+		i, err := parseIdentitiesFile(name)
 		if err != nil {
-			errorf("reading %q: %v", path, err)
+			errorf("reading %q: %v", name, err)
 		}
 		identities = append(identities, i...)
 	}
@@ -309,10 +393,10 @@ func encrypt(recipientKeys, recipientFiles, identityFiles []string,
 func decrypt(identityFiles []string, in io.Reader, out io.Writer) {
 	var identities []dashi.Identity
 
-	for _, path := range identityFiles {
-		i, err := parseIdentitiesFile(path)
+	for _, name := range identityFiles {
+		i, err := parseIdentitiesFile(name)
 		if err != nil {
-			errorf("reading %q: %v", path, err)
+			errorf("reading %q: %v", name, err)
 		}
 		identities = append(identities, i...)
 	}
@@ -323,22 +407,131 @@ func decrypt(identityFiles []string, in io.Reader, out io.Writer) {
 	}
 }
 
-func generateKey(out io.Writer) error {
-	return dashi.GenerateKey(out)
+func parseRecipientsFile(name string) ([]dashi.Recipient, error) {
+	file, err := openFile(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	buf := bufio.NewReader(file)
+
+	tpReader := textproto.NewReader(buf)
+
+	mimeHeader, err := tpReader.ReadMIMEHeader()
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+
+	publicKeyHeaders := mimeHeader.Values("Public-Key")
+	if len(publicKeyHeaders) == 0 {
+		return nil, fmt.Errorf("file does not contain a public key: %v", name)
+	}
+
+	var recipients []dashi.Recipient
+
+	for _, publicKeyHeader := range publicKeyHeaders {
+		if publicKeyHeader == "" {
+			return nil, fmt.Errorf("public key is required")
+		}
+
+		publicKeyHeaderFields := strings.Fields(publicKeyHeader)
+		l := len(publicKeyHeaderFields)
+		if l != 2 {
+			return nil, fmt.Errorf("invalid public key format")
+		}
+		if publicKeyHeaderFields[0] != string(header.Ed25519) {
+			return nil, fmt.Errorf("unknown public key type")
+		}
+
+		publicKeyString := publicKeyHeaderFields[1]
+
+		if len(publicKeyString) != 52 {
+			return nil, fmt.Errorf("invalid public key length")
+		}
+
+		recipient, err := dashi.NewRecipientFromPublicKeyString(publicKeyString)
+		if err != nil {
+			return nil, err
+		}
+
+		recipients = append(recipients, *recipient)
+	}
+
+	return recipients, nil
 }
 
-func parseRecipientsFile(path string) ([]dashi.Recipient, error) {
-	return []dashi.Recipient{
-		*r1,
-		*r2,
-		*r3,
-	}, nil
+func parseIdentitiesFile(name string) ([]dashi.Identity, error) {
+	file, err := openFile(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	buf := bufio.NewReader(file)
+
+	tpReader := textproto.NewReader(buf)
+
+	mimeHeader, err := tpReader.ReadMIMEHeader()
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+
+	secretKeyHeaders := mimeHeader.Values("Secret-Key")
+	if len(secretKeyHeaders) == 0 {
+		return nil, fmt.Errorf("identity file does not contain a secret key: %v", name)
+	}
+
+	var identities []dashi.Identity
+
+	for _, secretKeyHeader := range secretKeyHeaders {
+		if secretKeyHeader == "" {
+			return nil, fmt.Errorf("secret key is required")
+		}
+
+		secretKeyHeaderFields := strings.Fields(secretKeyHeader)
+		l := len(secretKeyHeaderFields)
+		if l != 2 {
+			return nil, fmt.Errorf("invalid secret key format")
+		}
+		if secretKeyHeaderFields[0] != string(header.Ed25519) {
+			return nil, fmt.Errorf("unknown secret key type")
+		}
+
+		secretKeyString := secretKeyHeaderFields[1]
+
+		if len(secretKeyString) != 103 {
+			return nil, fmt.Errorf("invalid secret key length")
+		}
+
+		identity, err := dashi.NewIdentityFromSecretKeyString(secretKeyString)
+		if err != nil {
+			return nil, err
+		}
+
+		identities = append(identities, *identity)
+	}
+
+	return identities, nil
 }
 
-func parseIdentitiesFile(path string) ([]dashi.Identity, error) {
-	return []dashi.Identity{
-		*r3Identity,
-	}, nil
+func openFile(name string) (*os.File, error) {
+	var file *os.File
+
+	if name == "-" {
+		if stdinInUse {
+			return nil, fmt.Errorf("standard input is used for multiple purposes")
+		}
+		stdinInUse = true
+		file = os.Stdin
+	} else {
+		var err error
+		file, err = os.Open(name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open file: %v", err)
+		}
+	}
+	return file, nil
 }
 
 type lazyOpener struct {
@@ -390,4 +583,13 @@ func errorWithHint(error string, hints ...string) {
 		log.Printf("dashi: hint: %s", hint)
 	}
 	os.Exit(1)
+}
+
+func stripSpaces(str string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, str)
 }
