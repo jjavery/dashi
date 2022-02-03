@@ -7,7 +7,7 @@ import (
 	"jjavery/dashi/internal/sodium"
 )
 
-const chunkSize = 256
+const chunkSize = 64 * 1024
 
 type SecretStreamWriter struct {
 	encoder       *sodium.SecretStreamEncoder
@@ -153,23 +153,25 @@ func (reader *SecretStreamReader) Read(p []byte) (int, error) {
 		return 0, err
 	}
 
-	plaintext, err := reader.decoder.Decode(chunk[0:l])
-	if err != nil {
-		return 0, err
+	if l > 0 {
+		plaintext, err := reader.decoder.Decode(chunk[0:l])
+		if err != nil {
+			return 0, err
+		}
+
+		n := len(plaintext)
+		if n < len(p) {
+			copy(p, plaintext)
+			return n, nil
+		}
+
+		_, err = reader.buf.Write(plaintext)
+		if err != nil {
+			return 0, err
+		}
 	}
 
-	n := len(plaintext)
-	if n < len(p) {
-		copy(p, plaintext)
-		return n, nil
-	}
-
-	_, err = reader.buf.Write(plaintext)
-	if err != nil {
-		return 0, err
-	}
-
-	n, err = reader.buf.Read(p)
+	n, err := reader.buf.Read(p)
 	if err != nil {
 		return n, err
 	}

@@ -15,7 +15,7 @@ import (
 	"jjavery/dashi/internal/sodium"
 )
 
-const chunkSize = 256
+const chunkSize = 64 * 1024
 
 var magic = "DASHI/0.1"
 var b64 = base64.RawStdEncoding.EncodeToString

@@ -182,8 +182,11 @@ func (reader *SignatureReader) read(p []byte) (n int, err error) {
 		if err != nil {
 			return 0, err
 		}
-		p = p[:i]
-		eof = true
+		n = min(i, len(p))
+		p = p[:n]
+		if n == i {
+			eof = true
+		}
 	} else if err != nil {
 		return 0, err
 	}
