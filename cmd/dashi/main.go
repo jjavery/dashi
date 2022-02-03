@@ -48,7 +48,7 @@ Options:
     -r, --recipient RECIPIENT   Encrypt to the specified RECIPIENT. Can be repeated.
     -R, --recipients-file PATH  Encrypt to recipients listed at PATH. Can be repeated.
     -i, --identity PATH         Use the identity file at PATH. Can be repeated with
-		                            decrypt or verify.
+                                decrypt or verify.
     -n, --anon                  Encrypt to anonymous recipients with an anonymous
                                 identity.
 
@@ -66,8 +66,8 @@ will be ignored. "-" may be used to read identities from standard input.
 
 Example:
     $ dashi --keygen -o key.txt
-    Public-Key: 58Jrd91MvzPqJEVty1ZBfqBwFyfdS31Eee48irrKSjw
-    $ tar cvz ~/data | dashi -r 58Jrd91MvzPqJEVty1ZBfqBwFyfdS31Eee48irrKSjw > data.tar.gz.dashi
+    Public-Key: Ed25519 KW7YMMS4FZ6QNOSFFMTC3EPKKDFIPCBO4HHJWK5GLOT4RZ52ULYQ
+    $ tar cvz ~/data | dashi -r XJ3HXS7IDAZODTIXVJ44FJ424FCP64RCCFECN7EOTBFEILPWWTEA > data.tar.gz.dashi
     $ dashi --decrypt -i key.txt -o data.tar.gz data.tar.gz.dashi`
 
 var Version string
@@ -198,6 +198,13 @@ func main() {
 		if armorFlag {
 			errorWithHint("-a/--armor can't be used with -d/--decrypt",
 				"note that armored files are detected automatically")
+		}
+		if len(identityFlags) == 0 {
+			if !fileExists(defaultIdentityFile) {
+				errorWithHint("-i/--identity is required with -e/--encrypt",
+					"or create a default identity file in '"+defaultIdentityFile+"'")
+			}
+			identityFlags = append(identityFlags, defaultIdentityFile)
 		}
 		// if passFlag {
 		// 	errorWithHint("-p/--passphrase can't be used with -d/--decrypt",

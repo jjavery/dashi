@@ -39,7 +39,7 @@ Options:
     -r, --recipient RECIPIENT   Encrypt to the specified RECIPIENT. Can be repeated.
     -R, --recipients-file PATH  Encrypt to recipients listed at PATH. Can be repeated.
     -i, --identity PATH         Use the identity file at PATH. Can be repeated with
-		                            decrypt or verify.
+                                decrypt or verify.
     -n, --anon                  Encrypt to anonymous recipients with an anonymous
                                 identity.
 ```
